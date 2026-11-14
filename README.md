@@ -11,8 +11,13 @@ not bundle observations.
 
 ## Method and limits
 
-- The cutout is centered on the entered coordinate. A moving source can leave
-  the aperture at other epochs; no ephemeris correction is currently applied.
+- Custom-coordinate searches keep the cutout and aperture at one fixed
+  coordinate; a moving source can leave that aperture over time.
+- The Barnard's Star preset keeps the cutout centered at the Gaia EDR3
+  J2016.0 reference position and moves the aperture and red cross to the
+  proper-motion-predicted position for each observation MJD. The cross is a
+  prediction, not a measured centroid or a confirmed detection. This single
+  star-motion preset is not a general ephemeris service.
 - Aperture-mean surface brightness is measured within 2 pixels, with a local
   background ring from 8 to 20 pixels (reduced for small cutouts).
 - Uncertainty is the larger of the variance-derived aperture uncertainty and
@@ -42,6 +47,10 @@ not bundle observations.
 - [IRSA's SPHEREx source-discovery tutorial](https://caltech-ipac.github.io/irsa-tutorials/spherex-source-discovery-tool-demo/),
   including its image-flag masking example.
 - [Astropy FITS and WCS documentation](https://docs.astropy.org/en/stable/io/fits/).
+- Barnard's Star coordinates, proper motion, parallax, and radial velocity from
+  [SIMBAD/Sesame](https://cds.unistra.fr/cgi-bin/nph-sesame/-ox/S?Barnard%27s%20Star);
+  the Gaia EDR3 catalog reference epoch is J2016.0
+  ([ESA Gaia EDR3](https://www.cosmos.esa.int/web/gaia/early-data-release-3)).
 
 SPHEREx acknowledgement requested by IRSA: “This publication makes use of
 data products from the Spectro-Photometer for the History of the Universe,

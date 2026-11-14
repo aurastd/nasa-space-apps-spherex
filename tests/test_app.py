@@ -1,10 +1,16 @@
 import unittest
 
+import astropy.units as u
 import numpy as np
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 
 from app import (
+    _coordinate_at_mjd,
+    _display_image,
     _interpolate_wavelength,
     explain_choice,
+    get_frames,
     measure_frame,
     rank_bandpasses,
 )
@@ -55,6 +61,41 @@ class MeasurementTests(unittest.TestCase):
         )
         self.assertAlmostEqual(wavelength, 1.0)
         self.assertAlmostEqual(bandwidth, 0.2)
+
+    def test_barnards_star_position_tracks_gaia_proper_motion(self) -> None:
+        reference = SkyCoord(269.4520769586187, 4.69336496657667, unit="deg")
+        reference_mjd = Time(2016.0, format="jyear").mjd
+        observation_mjd = 60902.864715
+        unchanged = _coordinate_at_mjd(reference, observation_mjd, False)
+        moved = _coordinate_at_mjd(reference, observation_mjd, True)
+
+        self.assertAlmostEqual(reference.separation(unchanged).arcsec, 0.0)
+        self.assertGreater(reference.separation(moved).arcsec, 99.0)
+        self.assertLess(moved.ra.deg, reference.ra.deg)
+        self.assertGreater(moved.dec.deg, reference.dec.deg)
+        self.assertAlmostEqual(
+            _coordinate_at_mjd(reference, reference_mjd, True).separation(
+                reference
+            ).to_value(u.mas),
+            0.0,
+            delta=1.0,
+        )
+
+    def test_barnards_star_tracking_requires_wide_enough_cutout(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least 0.1 degrees"):
+            get_frames(
+                269.4520769586187,
+                4.69336496657667,
+                0.05,
+                track_barnards_star=True,
+            )
+
+    def test_predicted_position_marker_is_drawn_on_rgb_display(self) -> None:
+        image = np.arange(81, dtype=np.float32).reshape((9, 9))
+        shown = _display_image(image, marker=(4, 4))
+
+        self.assertEqual(shown.shape, (9, 9, 3))
+        np.testing.assert_allclose(shown[4, 4], (1.0, 0.2, 0.2))
 
     def test_band_explanation_describes_flags_as_a_proxy(self) -> None:
         result = explain_choice(

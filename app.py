@@ -29,6 +29,15 @@ DEEP_COLLECTIONS = (
 MAX_QUERY_ROWS = 256
 MAX_DISPLAY_FRAMES = 48
 GOOD_FLAG_VALUES = (0, 2, 2097152)
+BARNARDS_STAR = {
+    "ra": 269.4520769586187,
+    "dec": 4.69336496657667,
+    "pm_ra_cosdec": -801.551,
+    "pm_dec": 10362.394,
+    "parallax": 546.9759,
+    "radial_velocity": -110.11,
+    "reference_epoch": 2016.0,
+}
 
 
 class DataAccessError(RuntimeError):
@@ -50,6 +59,8 @@ class Frame(TypedDict):
     uncertainty: float | None
     snr: float | None
     flagged_fraction: float
+    target_x: float
+    target_y: float
 
 
 class BandScore(TypedDict):
@@ -80,6 +91,25 @@ class Measurement(TypedDict):
 def resolve_target(name: str) -> SkyCoord:
     """Resolve a target name through Astropy's online name resolver."""
     return SkyCoord.from_name(name)
+
+
+def _coordinate_at_mjd(
+    coordinate: SkyCoord, mjd: float, track_barnards_star: bool
+) -> SkyCoord:
+    if not track_barnards_star:
+        return coordinate
+
+    barnards_star = SkyCoord(
+        ra=coordinate.ra,
+        dec=coordinate.dec,
+        distance=(1000 / BARNARDS_STAR["parallax"]) * u.pc,
+        pm_ra_cosdec=BARNARDS_STAR["pm_ra_cosdec"] * u.mas / u.yr,
+        pm_dec=BARNARDS_STAR["pm_dec"] * u.mas / u.yr,
+        radial_velocity=BARNARDS_STAR["radial_velocity"] * u.km / u.s,
+        obstime=Time(BARNARDS_STAR["reference_epoch"], format="jyear"),
+        frame="icrs",
+    )
+    return barnards_star.apply_space_motion(new_obstime=Time(mjd, format="mjd"))
 
 
 def _column_value(row: object, column: str) -> object:
@@ -238,6 +268,7 @@ def get_frames(
     fov: float,
     max_frames: int = 12,
     include_deep: bool = False,
+    track_barnards_star: bool = False,
 ) -> list[Frame]:
     """Search IRSA SIA2 and download a time-spread set of Level-2 cutouts."""
     if not 0 <= ra <= 360:
@@ -246,6 +277,10 @@ def get_frames(
         raise ValueError("Declination must be between -90 and 90 degrees.")
     if not 0.05 <= fov <= 0.5:
         raise ValueError("Field of view must be between 0.05 and 0.5 degrees.")
+    if track_barnards_star and fov < 0.1:
+        raise ValueError(
+            "Barnard's Star tracking requires a field of view of at least 0.1 degrees."
+        )
     if not 1 <= max_frames <= MAX_DISPLAY_FRAMES:
         raise ValueError(f"Frame limit must be between 1 and {MAX_DISPLAY_FRAMES}.")
 
@@ -285,6 +320,10 @@ def get_frames(
         cutout_url = _cutout_url(
             str(candidate["access_url"]), ra % 360, dec, fov
         )
+        mjd = float(candidate["mjd"])
+        target_coordinate = _coordinate_at_mjd(
+            coordinate, mjd, track_barnards_star
+        )
         try:
             file_path = download_file(
                 cutout_url,
@@ -298,7 +337,7 @@ def get_frames(
                 variance = np.asarray(hdus["VARIANCE"].data, dtype=np.float32).copy()
                 flags = np.asarray(hdus["FLAGS"].data).copy()
                 wavelength, bandwidth, x_pixel, y_pixel = _wavelength_at_position(
-                    hdus, coordinate
+                    hdus, target_coordinate
                 )
                 measurement = measure_frame(
                     image, variance, flags, x_pixel, y_pixel
@@ -308,7 +347,6 @@ def get_frames(
                 f"Could not read the SPHEREx cutout {candidate['access_url']}: {error}"
             ) from error
 
-        mjd = float(candidate["mjd"])
         frames.append(
             {
                 "image": image,
@@ -320,6 +358,8 @@ def get_frames(
                 "wavelength_um": wavelength,
                 "bandwidth_um": bandwidth,
                 **measurement,
+                "target_x": x_pixel,
+                "target_y": y_pixel,
             }
         )
     return frames
@@ -372,9 +412,12 @@ def get_spectrum(
     fov: float = 0.1,
     max_frames: int = 48,
     include_deep: bool = False,
+    track_barnards_star: bool = False,
 ) -> Spectrum:
     """Assemble a display spectrum using each cutout's WCS-WAVE mapping."""
-    frames = get_frames(ra, dec, fov, max_frames, include_deep)
+    frames = get_frames(
+        ra, dec, fov, max_frames, include_deep, track_barnards_star
+    )
     samples = [
         frame
         for frame in frames
@@ -392,14 +435,30 @@ def get_spectrum(
     }
 
 
-def _display_image(image: np.ndarray) -> np.ndarray:
+def _display_image(
+    image: np.ndarray, marker: tuple[float, float] | None = None
+) -> np.ndarray:
     finite = image[np.isfinite(image)]
     if finite.size == 0:
         return np.zeros(image.shape, dtype=np.float32)
     low, high = np.percentile(finite, [5, 99])
     if high <= low:
-        return np.zeros(image.shape, dtype=np.float32)
-    return np.clip((image - low) / (high - low), 0, 1).astype(np.float32)
+        normalized = np.zeros(image.shape, dtype=np.float32)
+    else:
+        normalized = np.clip((image - low) / (high - low), 0, 1).astype(
+            np.float32
+        )
+    if marker is None:
+        return normalized
+
+    rgb = np.repeat(normalized[:, :, np.newaxis], 3, axis=2)
+    x, y = (int(round(value)) for value in marker)
+    for offset in range(-4, 5):
+        if 0 <= x + offset < image.shape[1] and 0 <= y < image.shape[0]:
+            rgb[y, x + offset] = (1.0, 0.2, 0.2)
+        if 0 <= x < image.shape[1] and 0 <= y + offset < image.shape[0]:
+            rgb[y + offset, x] = (1.0, 0.2, 0.2)
+    return rgb
 
 
 def main() -> None:
@@ -407,11 +466,48 @@ def main() -> None:
     st.title("Evarinya — explore SPHEREx observations")
     st.write("Search real Level-2 spectral images by sky position.")
 
+    target_choice = st.sidebar.selectbox(
+        "Target",
+        ("Custom coordinates", "Barnard's Star (Gaia EDR3 proper motion)"),
+    )
+    track_barnards_star = target_choice.startswith("Barnard's Star")
+    previous_search = st.session_state.get("search_parameters")
+    if previous_search and previous_search[-1] != track_barnards_star:
+        st.session_state.pop("frames", None)
+        st.session_state.pop("search_parameters", None)
+
     with st.sidebar.form("search"):
         st.subheader("Sky position")
-        ra = st.number_input("Right ascension (°)", min_value=0.0, max_value=360.0, value=269.45)
-        dec = st.number_input("Declination (°)", min_value=-90.0, max_value=90.0, value=4.69)
-        fov = st.number_input("Cutout width (°)", min_value=0.05, max_value=0.5, value=0.1, format="%.3f")
+        if track_barnards_star:
+            ra = BARNARDS_STAR["ra"]
+            dec = BARNARDS_STAR["dec"]
+            st.caption(
+                "The cutout stays centered on the Gaia EDR3 reference position "
+                "(J2016.0); the red cross follows the proper-motion-predicted "
+                "position at each observation epoch."
+            )
+        else:
+            ra = st.number_input(
+                "Right ascension (°)",
+                min_value=0.0,
+                max_value=360.0,
+                value=269.45,
+            )
+            dec = st.number_input(
+                "Declination (°)",
+                min_value=-90.0,
+                max_value=90.0,
+                value=4.69,
+            )
+        fov = st.number_input(
+            "Cutout width (°)",
+            min_value=0.05,
+            max_value=0.5,
+            value=0.1,
+            format="%.3f",
+        )
+        if track_barnards_star:
+            st.caption("Use at least 0.1° so the target remains in the reference-centered cutout.")
         max_frames = st.slider("Maximum frames to download", 1, MAX_DISPLAY_FRAMES, 12)
         include_deep = st.checkbox("Include deep-field collections", value=False)
         submitted = st.form_submit_button("Search IRSA", type="primary")
@@ -421,9 +517,23 @@ def main() -> None:
         st.session_state.pop("search_parameters", None)
         try:
             with st.spinner("Querying IRSA and downloading SPHEREx cutouts..."):
-                frames = get_frames(ra, dec, fov, max_frames, include_deep)
+                frames = get_frames(
+                    ra,
+                    dec,
+                    fov,
+                    max_frames,
+                    include_deep,
+                    track_barnards_star,
+                )
             st.session_state["frames"] = frames
-            st.session_state["search_parameters"] = (ra, dec, fov, max_frames, include_deep)
+            st.session_state["search_parameters"] = (
+                ra,
+                dec,
+                fov,
+                max_frames,
+                include_deep,
+                track_barnards_star,
+            )
         except (DataAccessError, ValueError) as error:
             st.error(f"SPHEREx search failed: {error}")
             return
@@ -440,10 +550,21 @@ def main() -> None:
         f"Loaded {len(frames)} cutouts from IRSA SIA2 (DR1 and QR3). "
         "A network connection is required."
     )
-    st.warning(
-        "The cutouts are centered on one fixed coordinate. A moving source may leave "
-        "the aperture at other epochs; any moving-object suggestion is only a candidate."
-    )
+    if track_barnards_star:
+        st.warning(
+            "The cutouts remain centered at the fixed Gaia reference position; only "
+            "Barnard's Star's aperture follows the proper-motion prediction."
+        )
+        st.info(
+            "The red cross is Barnard's Star's position predicted from Gaia EDR3 "
+            "proper motion; it is not a measured centroid or a confirmed detection."
+        )
+    else:
+        st.warning(
+            "The cutouts are centered on one fixed coordinate. A moving source may "
+            "leave the aperture at other epochs; any moving-object suggestion is "
+            "only a candidate."
+        )
 
     rankings = rank_bandpasses(frames)
     if rankings and rankings[0]["score"] > 0:
@@ -461,7 +582,16 @@ def main() -> None:
     band_frames = [frame for frame in frames if frame["band"] == selected_band]
     frame_index = st.slider("Observation", 0, len(band_frames) - 1, 0)
     frame = band_frames[frame_index]
-    st.image(_display_image(frame["image"]), clamp=True, use_container_width=True)
+    marker = (
+        (frame["target_x"], frame["target_y"])
+        if track_barnards_star
+        else None
+    )
+    st.image(
+        _display_image(frame["image"], marker),
+        clamp=True,
+        use_container_width=True,
+    )
     st.caption(
         f"{frame['observation_time']} · {frame['band']} · "
         f"λ={frame['wavelength_um']:.3f} µm "
@@ -479,11 +609,25 @@ def main() -> None:
             "proxy, not a source-contamination catalog."
         )
 
-    ra, dec, fov, max_frames, include_deep = st.session_state["search_parameters"]
+    (
+        ra,
+        dec,
+        fov,
+        max_frames,
+        include_deep,
+        track_barnards_star,
+    ) = st.session_state["search_parameters"]
     if st.button("Extract spectrum at this coordinate"):
         try:
             with st.spinner("Extracting a spectrum from the loaded epochs..."):
-                spectrum = get_spectrum(ra, dec, fov, max_frames, include_deep)
+                spectrum = get_spectrum(
+                    ra,
+                    dec,
+                    fov,
+                    max_frames,
+                    include_deep,
+                    track_barnards_star,
+                )
         except DataAccessError as error:
             st.error(f"Could not extract the spectrum: {error}")
             return
