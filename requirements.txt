@@ -1,6 +1,4 @@
 streamlit
-pandas
-numpy
-matplotlib
 astropy
-astroquery
+numpy
+pandas
