@@ -271,6 +271,56 @@ def make_grid(center: SkyCoord, fov_arcmin: float, max_px: int = 300):
     return w, (n, n), scale
 
 
+def smooth_background(img, block: int = 30, pct: float = 30.0):
+    """Slowly varying background (leftover zodiacal light, detector gradients): a low percentile
+    in coarse blocks (so stars barely bias it), interpolated back up to full size."""
+    from scipy import ndimage as ndi
+    h, w = img.shape
+    ny, nx = max(int(np.ceil(h / block)), 1), max(int(np.ceil(w / block)), 1)
+    coarse = np.full((ny, nx), np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for j in range(ny):
+            for i in range(nx):
+                blk = img[j * block:(j + 1) * block, i * block:(i + 1) * block]
+                if np.isfinite(blk).sum() >= 0.3 * blk.size:
+                    coarse[j, i] = np.nanpercentile(blk, pct)
+    good = np.isfinite(coarse)
+    if not good.any():
+        return np.zeros_like(img)
+    coarse[~good] = np.median(coarse[good])
+    yy, xx = np.indices(img.shape)
+    bg = ndi.map_coordinates(coarse, [(yy + 0.5) / block - 0.5, (xx + 0.5) / block - 0.5],
+                             order=1, mode="nearest")
+    return bg
+
+
+def common_crop(frames, edge_ok: float = 0.97):
+    """Largest box (y0, y1, x0, x1) with solid data in every frame, so the ragged black edges where
+    exposures don't overlap are cut away. Isolated masked pixels are tolerated."""
+    from scipy import ndimage as ndi
+    ok = np.ones(frames[0].image.shape, bool)
+    for f in frames:                     # a pixel is solid if >=80% of its 5x5 neighbourhood has data
+        ok &= ndi.uniform_filter(np.isfinite(f.image).astype(float), size=5) >= 0.8
+    y0, x0 = 0, 0
+    y1, x1 = ok.shape
+    while y1 - y0 > 20 and x1 - x0 > 20:
+        edges = {"t": ok[y0, x0:x1].mean(), "b": ok[y1 - 1, x0:x1].mean(),
+                 "l": ok[y0:y1, x0].mean(), "r": ok[y0:y1, x1 - 1].mean()}
+        worst = min(edges, key=edges.get)
+        if edges[worst] >= edge_ok:
+            break
+        if worst == "t":
+            y0 += 1
+        elif worst == "b":
+            y1 -= 1
+        elif worst == "l":
+            x0 += 1
+        else:
+            x1 -= 1
+    return y0, y1, x0, x1
+
+
 def build_frames(target: Target, rows, fov_arcmin: float, progress=None):
     """Download (cached), clean and reproject every exposure in `rows` onto one north-up grid.
     Returns (frames, grid_wcs, arcsec_per_pixel)."""
@@ -291,7 +341,7 @@ def build_frames(target: Target, rows, fov_arcmin: float, progress=None):
         if np.isfinite(out).mean() < 0.5:               # target too close to the detector edge
             continue
         out = out.astype(np.float32)
-        out -= np.nanmedian(out)
+        out -= smooth_background(out)
         det = c["det"] or r["det"]
         wl = c["wl"] if np.isfinite(c["wl"]) else float(np.mean(BAND_UM[det]))
         frames.append(Frame(r["mjd"], det, wl, out, contamination_near(c["flg"], c["x"], c["y"])))
@@ -325,27 +375,35 @@ def stack_frames(frames, bin_days: float):
 # ------------------------------------------------------------------ colors and spectrum
 def best_detector(target: Target, rows, fov_arcmin: float, per_det: int = 4, progress=None):
     """Sample a few exposures per color, measure the signal-to-noise at the target, and return
-    (best detector, {detector: median S/N}). Only colors with 3+ images are candidates."""
+    (best detector, {detector: median S/N}, info). Colors with 3+ images are preferred; if none
+    qualifies, any measured color is used. `info` says how many downloads/measurements failed
+    and why, so the app can explain itself instead of silently guessing."""
     by_det = {}
     for r in rows:
         by_det.setdefault(r["det"], []).append(r)
     chosen = [r for rs in by_det.values() for r in thin(rs, per_det)]
     paths = download_rows(target, chosen, fov_arcmin, progress)
+    info = dict(tried=len(chosen), download_failed=0, read_failed=0, no_signal=0, last_error="")
     snrs = {}
     for r, p in zip(chosen, paths):
         if p is None:
+            info["download_failed"] += 1
             continue
         try:
             m = measure(p, target.at_mjd(r["mjd"]))
-        except Exception:
+        except Exception as e:
+            info["read_failed"] += 1
+            info["last_error"] = f"{type(e).__name__}: {e}"
             continue
         if np.isfinite(m["snr"]):
             snrs.setdefault(r["det"], []).append(m["snr"])
+        else:
+            info["no_signal"] += 1
     table = {d: float(np.median(v)) for d, v in snrs.items()}
     if not table:
-        return None, {}
+        return None, {}, info
     ok = [d for d in table if len(by_det[d]) >= 3] or list(table)
-    return max(ok, key=table.get), table
+    return max(ok, key=table.get), table, info
 
 
 def spectrum(target: Target, rows, fov_arcmin: float, progress=None):
@@ -380,8 +438,8 @@ def main(argv):
     if not rows:
         return
     print("Measuring a few exposures per detector...")
-    best, table = best_detector(t, rows, fov, progress=lambda f: print(f"\r  {f:4.0%}", end=""))
-    print("\nS/N by detector:", {d: round(v, 1) for d, v in table.items()}, "-> best:", best)
+    best, table, info = best_detector(t, rows, fov, progress=lambda f: print(f"\r  {f:4.0%}", end=""))
+    print("\nS/N by detector:", {d: round(v, 1) for d, v in table.items()}, "-> best:", best, info)
     if best:
         sel = thin([r for r in rows if r["det"] == best], 10)
         frames, grid, scale = build_frames(t, sel, fov)
