@@ -2,3 +2,8 @@ streamlit
 astropy
 numpy
 pandas
+pyvo
+plotly
+pillow
+reproject
+requests
