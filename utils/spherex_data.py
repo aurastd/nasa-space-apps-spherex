@@ -32,7 +32,7 @@ from astropy.wcs import WCS
 
 warnings.filterwarnings("ignore", module="astropy")
 
-COLLECTIONS = ["spherex_dr1", "spherex_qr3"]        # wide survey (QR2 is no longer searchable)
+COLLECTIONS = ["spherex_dr1", "spherex_qr3", "spherex_qr2"]  # fallback if IRSA listing is unavailable
 CACHE = Path(__file__).parent / "cache"
 BAND_UM = {1: (0.75, 1.09), 2: (1.10, 1.62), 3: (1.63, 2.41),
            4: (2.42, 3.82), 5: (3.83, 4.41), 6: (4.42, 5.00)}      # one range per detector
@@ -114,21 +114,89 @@ def thin(rows, n):
 
 
 # ------------------------------------------------------------------ query + download
+def _wide_collections():
+    """Return IRSA's current wide-survey collections, newest first."""
+    from astroquery.ipac.irsa import Irsa
+
+    try:
+        listing = Irsa.list_collections(servicetype="SIA", filter="spherex")
+    except Exception as exc:
+        warnings.warn(
+            f"Could not list IRSA SIA collections ({type(exc).__name__}: {exc}); "
+            "trying the known SPHEREx collections.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return list(COLLECTIONS)
+
+    if hasattr(listing, "colnames"):
+        columns = {column.lower(): column for column in listing.colnames}
+        raw = listing[columns["collection"]] if "collection" in columns else listing[listing.colnames[0]]
+    else:
+        raw = listing
+    wide = [
+        str(name).strip() for name in raw
+        if str(name).strip().startswith("spherex")
+        and not str(name).strip().endswith(("_cal", "_deep"))
+    ]
+    if not wide:
+        warnings.warn(
+            "IRSA returned no wide-survey SPHEREx collections; trying the known collection names.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return list(COLLECTIONS)
+
+    preference = {"dr": 0, "qr3": 1, "qr2": 2}
+    return sorted(
+        set(wide),
+        key=lambda name: (next((rank for token, rank in preference.items() if token in name), 9), name),
+    )
+
+
 def _sia_query(target: Target, radius_arcmin: float):
     from astroquery.ipac.irsa import Irsa
-    res = Irsa.query_sia(pos=(target.at(T_REF), radius_arcmin * u.arcmin), collection=COLLECTIONS)
-    names, rows, seen = res.colnames, [], set()
-    for r in res:
-        url = str(r["access_url"])
-        det = detector_of(url, str(r["energy_bandpassname"]) if "energy_bandpassname" in names else "")
+    pos = (target.at(T_REF), radius_arcmin * u.arcmin)
+    tables, errors = [], []
+    for collection in _wide_collections():
         try:
-            mjd = float(r["t_min"])
-        except Exception:
+            result = Irsa.query_sia(pos=pos, collection=collection)
+        except Exception as exc:
+            errors.append(f"{collection}: {type(exc).__name__}: {exc}")
             continue
-        key = (round(mjd, 4), det)
-        if det and np.isfinite(mjd) and key not in seen:
-            seen.add(key)
-            rows.append(dict(url=url, mjd=mjd, det=det))
+        if result is not None:
+            tables.append(result)
+
+    if not tables:
+        detail = "; ".join(errors) if errors else "IRSA returned no results"
+        raise RuntimeError(f"IRSA search failed for every collection ({detail})")
+    if errors:
+        warnings.warn(
+            "Some IRSA collections could not be queried; continuing with successful collections: "
+            + "; ".join(errors),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    rows, seen = [], set()
+    for result in tables:
+        names = result.colnames
+        for row in result:
+            url = str(row["access_url"])
+            det = detector_of(url, str(row["energy_bandpassname"]) if "energy_bandpassname" in names else "")
+            try:
+                mjd = float(row["t_min"])
+            except Exception:
+                continue
+            key = (round(mjd, 4), det)
+            if det and np.isfinite(mjd) and key not in seen:
+                seen.add(key)
+                rows.append(dict(url=url, mjd=mjd, det=det))
+    if errors and not rows:
+        raise RuntimeError(
+            "IRSA returned no exposures from the successful collections, and other collections failed "
+            f"({'; '.join(errors)})"
+        )
     rows.sort(key=lambda r: r["mjd"])
     return rows
 
@@ -386,6 +454,56 @@ def stack_frames(frames, bin_days: float):
         out.append(Frame(float(np.mean([f.mjd for f in g])), g[0].detector, wl, img,
                          sorted({x for f in g for x in f.flags}), len(g)))
     return out
+
+
+def image_candidates(frames, grid, target: Target, radius_arcmin: float = 1.0,
+                     threshold_sigma: float = 5.0, max_candidates: int = 10):
+    """Find bright local peaks near the target in a median image of the selected frames."""
+    if not frames or radius_arcmin <= 0 or max_candidates <= 0:
+        return []
+
+    from scipy import ndimage as ndi
+
+    y0, y1, x0, x1 = common_crop(frames)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        image = np.nanmedian(np.stack([f.image[y0:y1, x0:x1] for f in frames]), axis=0)
+    valid = np.isfinite(image)
+    values = image[valid]
+    if values.size < 20:
+        return []
+
+    background = float(np.median(values))
+    sigma = 1.4826 * float(np.median(np.abs(values - background)))
+    if not np.isfinite(sigma) or sigma <= 0:
+        return []
+
+    peak_map = ndi.maximum_filter(np.where(valid, image, -np.inf), size=5, mode="constant",
+                                  cval=-np.inf)
+    ys, xs = np.where(valid & (image == peak_map) & (image > background + threshold_sigma * sigma))
+    order = np.argsort(image[ys, xs])[::-1]
+    center = target.at(T_REF)
+    candidates = []
+    for i in order:
+        y, x = int(ys[i]), int(xs[i])
+        px, py = x + x0, y + y0
+        sky = grid.pixel_to_world(px, py)
+        separation = float(center.separation(sky).arcmin)
+        if separation > radius_arcmin:
+            continue
+        if any((px - c["x"]) ** 2 + (py - c["y"]) ** 2 < 25 for c in candidates):
+            continue
+        candidates.append({
+            "ra": float(sky.ra.deg),
+            "dec": float(sky.dec.deg),
+            "separation_arcmin": separation,
+            "snr": float((image[y, x] - background) / sigma),
+            "x": px,
+            "y": py,
+        })
+
+    candidates.sort(key=lambda c: (c["separation_arcmin"], -c["snr"]))
+    return candidates[:max_candidates]
 
 
 # ------------------------------------------------------------------ colors and spectrum

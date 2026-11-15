@@ -12,7 +12,8 @@ import streamlit as st
 import spherex_data as sx
 from presets import DEFAULT, PRESETS
 
-st.set_page_config(page_title="Evarínya – SPHEREx Sky Viewer", page_icon="🌌", layout="wide")
+st.set_page_config(page_title="Evarínya – SPHEREx Sky Viewer", page_icon="🌌", layout="wide",
+                   initial_sidebar_state="expanded")
 def _stars(n, seed, colors=("#ffffff", "#ffffff", "#cfe3ff", "#ffe9c4")):
     """CSS box-shadow star field: n points scattered over the viewport (pure CSS, works offline)."""
     rng = np.random.default_rng(seed)
@@ -37,16 +38,17 @@ STAR_CSS = f"""
                   animation: twinkle 5s ease-in-out infinite alternate; }}
 @keyframes twinkle {{ from {{ opacity: .25; }} to {{ opacity: 1; }} }}
 [data-testid="stHeader"], [data-testid="stAppViewContainer"], [data-testid="stMain"] {{ background: transparent; }}
-.block-container {{ position: relative; z-index: 1; padding-top: 2.2rem; max-width: 1100px; }}
+.block-container {{ position: relative; z-index: 1; padding-top: .8rem; max-width: 1100px; }}
 
-.hero {{ text-align: center; padding: 1.2rem 0 1.4rem; }}
-.hero .kicker {{ letter-spacing: .35em; font-size: .72rem; color: #93c5fd; text-transform: uppercase; }}
-.hero h1 {{ margin: .25rem 0 .2rem; font-size: 3.1rem !important; letter-spacing: .22em; font-weight: 800;
+.hero {{ text-align: center; padding: .3rem 0 .65rem; }}
+.hero .kicker {{ letter-spacing: .2em; font-size: .62rem; color: #93c5fd; text-transform: uppercase; }}
+.hero h1 {{ margin: .1rem 0 .2rem; font-size: 2.15rem !important; letter-spacing: .12em; font-weight: 800;
             background: linear-gradient(90deg, #fde68a, #f59e0b 45%, #fb7185);
             -webkit-background-clip: text; background-clip: text; color: transparent;
-            filter: drop-shadow(0 0 18px rgba(245,158,11,.35)); }}
-.hero p {{ color: #aab4d4; font-size: 1.05rem; margin: 0 auto; max-width: 640px; }}
-.hero .steps {{ margin-top: .9rem; color: #7f8bb3; font-size: .85rem; letter-spacing: .04em; }}
+            filter: drop-shadow(0 0 10px rgba(245,158,11,.3)); }}
+.hero h1 .brand-subtitle {{ margin-left: .5rem; font-size: .48em; font-weight: 500; letter-spacing: .04em;
+            color: #d5def5; -webkit-text-fill-color: #d5def5; vertical-align: middle; }}
+.hero p {{ color: #aab4d4; font-size: .9rem; margin: 0 auto; max-width: 640px; }}
 
 .stButton > button {{ border-radius: 999px; border: 1px solid rgba(147,197,253,.35);
     background: rgba(15,23,52,.55); color: #e6ecff; backdrop-filter: blur(6px); transition: all .18s; }}
@@ -58,8 +60,6 @@ STAR_CSS = f"""
     border-radius: 14px; backdrop-filter: blur(6px); }}
 [data-testid="stSidebar"] {{ background: rgba(8,12,28,.82); backdrop-filter: blur(8px); border-right: 1px solid rgba(147,197,253,.15); }}
 [data-baseweb="select"] > div {{ background: rgba(13,18,36,.65); border-radius: 10px; }}
-[data-baseweb="tab-list"] {{ gap: .4rem; }}
-button[data-baseweb="tab"] {{ border-radius: 10px 10px 0 0; }}
 [data-testid="stPlotlyChart"] {{ background: rgba(2,4,12,.55); border: 1px solid rgba(147,197,253,.18);
     border-radius: 16px; padding: .4rem; box-shadow: 0 10px 40px rgba(0,0,0,.45); }}
 </style>
@@ -90,6 +90,35 @@ def lookup_name(ra, dec, radius_arcsec=15.0):
         return str(res[cols["main_id"]][0]).strip()
     except Exception:
         return None
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def resolve_object_name(name):
+    """Resolve a SIMBAD object name to J2000 coordinates and proper motion."""
+    from astroquery.simbad import Simbad
+
+    simbad = Simbad()
+    simbad.server = "simbad.harvard.edu"
+    simbad.timeout = 20
+    simbad.add_votable_fields("pmra", "pmdec")
+    result = simbad.query_object(name)
+    if result is None or len(result) == 0:
+        return None
+
+    columns = {column.lower(): column for column in result.colnames}
+    row = result[0]
+
+    def value(column, default=0.0):
+        item = row[columns[column]]
+        return default if np.ma.is_masked(item) else float(item)
+
+    return {
+        "name": str(row[columns["main_id"]]).strip(),
+        "ra": value("ra"),
+        "dec": value("dec"),
+        "pmra": value("pmra"),
+        "pmdec": value("pmdec"),
+    }
 
 
 class AutoColorFailed(Exception):
@@ -177,6 +206,11 @@ def pick(name):
     _set(PRESETS[name], PRESETS[name]["tip"])
 
 
+def use_image_candidate(ra, dec):
+    st.session_state.update(ra=f"{ra:.8f}", dec=f"{dec:.8f}", pmra=0.0, pmdec=0.0,
+                            epoch=sx.T_REF, tip="")
+
+
 if "ra" not in st.session_state:
     _set(PRESETS[DEFAULT], PRESETS[DEFAULT]["tip"])
     qp = st.query_params
@@ -192,27 +226,55 @@ if "ra" not in st.session_state:
 # ---------------------------------------------------------------- header
 st.markdown(
     "<div class='hero'><div class='kicker'>NASA SPHEREx · infrared sky survey</div>"
-    "<h1>EVARÍNYA</h1>"
-    "<p>Watch the infrared sky change over time, using real SPHEREx images.</p>"
-    "<div class='steps'>① pick a target &nbsp;·&nbsp; ② press play &nbsp;·&nbsp; ③ spot what moves</div></div>",
+    "<h1>EVARÍNYA&nbsp;<span class='brand-subtitle'>SPHEREx Sky Viewer</span></h1>"
+    "<p>Explore real infrared images and watch the sky change.</p></div>",
     unsafe_allow_html=True)
-st.sidebar.caption("✦ Try an example")
-for name in PRESETS:
-    st.sidebar.button(name, on_click=pick, args=(name,), use_container_width=True)
-if st.session_state.tip:
-    st.sidebar.info(st.session_state.tip)
 
-with st.sidebar.expander("Or enter your own coordinates"):
-    c1 = c2 = c3 = st
-    c1.text_input("Right ascension", key="ra", help="Degrees (269.45) or hours (17h57m48.5s)")
-    c2.text_input("Declination", key="dec", help="Degrees (4.69) or d m s (+04d41m36s)")
-    c3.slider("How wide an area? (arcminutes)", 1.0, 30.0, key="fov", step=0.5,
+with st.form("name_search_form"):
+    search_col, button_col = st.columns([5, 1])
+    search_col.text_input("Find a star or object by name", key="name_search",
+                          placeholder="e.g. Teegarden's Star")
+    submitted_name = button_col.form_submit_button("Find coordinates", use_container_width=True)
+if submitted_name:
+    object_name = st.session_state.name_search.strip()
+    if not object_name:
+        st.warning("Enter an object name to search SIMBAD.")
+    else:
+        try:
+            resolved = resolve_object_name(object_name)
+        except Exception as e:
+            st.error(f"SIMBAD lookup failed ({type(e).__name__}): {e}")
+        else:
+            if resolved is None:
+                st.warning(f"SIMBAD did not find an object named “{object_name}”.")
+            else:
+                st.session_state.ra = f"{resolved['ra']:.8f}"
+                st.session_state.dec = f"{resolved['dec']:.8f}"
+                st.session_state.pmra = resolved["pmra"]
+                st.session_state.pmdec = resolved["pmdec"]
+                st.session_state.epoch = 2000.0
+                st.success(f"Found {resolved['name']}; coordinates and motion filled in.")
+
+viewer_slot = st.empty()
+
+with st.sidebar.expander("Example targets", expanded=False):
+    for name in PRESETS:
+        st.button(name, key=f"preset_{name}", on_click=pick, args=(name,), use_container_width=True)
+if st.session_state.tip:
+    st.info(st.session_state.tip)
+
+st.sidebar.markdown("### Enter coordinates manually")
+st.sidebar.text_input("Right ascension (RA)", key="ra",
+                      help="Enter degrees (269.45) or hours (17h57m48.5s).")
+st.sidebar.text_input("Declination (Dec)", key="dec",
+                      help="Enter degrees (4.69) or degrees, minutes, seconds (+04d41m36s).")
+with st.sidebar.expander("Advanced settings · motion and field of view"):
+    st.slider("How wide an area? (arcminutes)", 1.0, 30.0, key="fov", step=0.5,
               help="Wider areas let you follow faster-moving objects, but load more slowly.")
-    d1 = d2 = d3 = st
-    d1.number_input("Motion in RA (mas/yr)", key="pmra", step=10.0, format="%.1f",
+    st.number_input("Motion in RA (mas/yr)", key="pmra", step=10.0, format="%.1f",
                     help="Optional. If you know the object's proper motion, the tool shows where it should be.")
-    d2.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f")
-    d3.number_input("Position is for year", key="epoch", step=1.0, format="%.1f",
+    st.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f")
+    st.number_input("Position is for year", key="epoch", step=1.0, format="%.1f",
                     help="Catalog positions are usually for the year 2000.")
 
 try:
@@ -239,8 +301,9 @@ try:
     with st.spinner("Asking the SPHEREx archive which images cover this spot (first time only)…"):
         rows = get_rows(ra, dec, pmra, pmdec, epoch)
 except Exception as e:
-    st.error(f"Couldn't reach the archive ({type(e).__name__}). Offline? Use a target you "
-             "downloaded beforehand with prefetch.py.")
+    st.error(f"Couldn't search the SPHEREx archive: {type(e).__name__}: {str(e)[:300]}. "
+             "If you're online, IRSA may be busy or changing its data releases, so try again in a minute. "
+             "Otherwise use a target you downloaded beforehand with prefetch.py.")
     st.stop()
 if not rows:
     st.warning("SPHEREx hasn't imaged this spot in the data released so far. Try another position.")
@@ -313,9 +376,7 @@ frames = sx.stack_frames(frames, bin_days)
 labels = [f"{i + 1}. {f.date} · {f.wavelength_um:.2f} µm" + (f" · ×{f.n}" if f.n > 1 else "")
           for i, f in enumerate(frames)]
 
-# ---------------------------------------------------------------- tabs
-tab_play, tab_cmp, tab_spec, tab_info, tab_guide = st.tabs(
-    ["▶ Watch it change", "Compare two dates", "Colors of light", "About this data", "📖 How to read this"])
+# ---------------------------------------------------------------- explore tabs
 
 crop = sx.common_crop(frames)
 cy0, cy1, cx0, cx1 = crop
@@ -325,51 +386,59 @@ years = (frames[-1].mjd - frames[0].mjd) / 365.25
 shift_as = float(np.hypot(pmra, pmdec)) / 1000 * years
 wls = [f.wavelength_um for f in frames]
 
+image_container = viewer_slot.container()
+m1, m2 = image_container.columns([3, 2])
+mode = m1.radio("View", ["▶ Animate", "⇄ Earliest vs latest"], horizontal=True, label_visibility="collapsed")
+zoom = m2.slider("Zoom", 1.0, 4.0, 1.0, 0.5, help="Zoom in on the target.")
+speed = image_container.slider("Speed", 1, 10, 3) if mode.startswith("▶") else None
+
+vy0, vy1, vx0, vx1 = view_box(crop, p_first, zoom)
+cube8 = to_uint8(np.stack([f.image[cy0:cy1, cx0:cx1] for f in frames]), upper, invert)
+view = colorize(cube8[:, vy0 - cy0:vy1 - cy0, vx0 - cx0:vx1 - cx0], cmap)
+off = np.array([vx0, vy0], float)
+r_px = 15 / scale
+ring = "#22d3ee" if cmap != "Grayscale" else ("#f59e0b" if not invert else "#0369a1")
+
+if mode.startswith("▶"):
+    fig = px.imshow(view, animation_frame=0, origin="lower", binary_string=True)
+    sl = fig.layout.sliders[0]
+    for step, f in zip(sl.steps, frames):
+        step.label = f.date
+    sl.currentvalue = dict(prefix="Date: ", font=dict(size=14))
+    sl.pad = dict(t=10)
+    if fig.layout.updatemenus:
+        btn = fig.layout.updatemenus[0].buttons[0].args[1]
+        btn["frame"]["duration"] = int(1000 / speed)
+        btn["transition"] = dict(duration=0)
+    marks = [(p_first, "solid")] + ([(p_last, "dot")] if has_pm else [])
+else:
+    pick_l = image_container.radio(
+        "Show", [f"Earliest · {frames[0].date}", f"Latest · {frames[-1].date}"], horizontal=True)
+    latest = pick_l.startswith("Latest")
+    fig = px.imshow(view[-1 if latest else 0], origin="lower", binary_string=True)
+    marks = [(p_last if latest else p_first, "solid")] + \
+            ([(p_first if latest else p_last, "dot")] if has_pm else [])
+for xy, dash in marks:
+    circle(fig, xy - off, r_px, ring, dash)
+if has_pm:
+    a_, b_ = p_first - off, p_last - off
+    fig.add_shape(type="line", x0=float(a_[0]), y0=float(a_[1]), x1=float(b_[0]), y1=float(b_[1]),
+                  line=dict(color=ring, width=1, dash="dot"))
+style_sky(fig, 600)
+image_container.plotly_chart(fig, use_container_width=True, config=dict(displaylogo=False, scrollZoom=True))
+_st = CMAPS[cmap] if not invert else [(1 - p, c) for p, c in reversed(CMAPS[cmap])]
+_grad = ", ".join(f"rgb{c} {int(p * 100)}%" for p, c in _st)
+image_container.markdown(
+    f"<div style='height:10px;border-radius:6px;background:linear-gradient(90deg,{_grad})'></div>"
+    "<div style='display:flex;justify-content:space-between;font-size:.75rem;color:#8b96b8'>"
+    "<span>faint</span><span>bright</span></div>",
+    unsafe_allow_html=True,
+)
+
+tab_play, tab_cmp, tab_spec, tab_info, tab_guide = st.tabs(
+    ["▶ Watch it change", "Compare two dates", "Colors of light", "About this data", "❓ Help"])
+
 with tab_play:
-    m1, m2 = st.columns([3, 2])
-    mode = m1.radio("View", ["▶ Animate", "⇄ Earliest vs latest"], horizontal=True, label_visibility="collapsed")
-    zoom = m2.slider("Zoom", 1.0, 4.0, 1.0, 0.5, help="Zoom in on the target.")
-    speed = st.slider("Speed", 1, 10, 3) if mode.startswith("▶") else None
-
-    vy0, vy1, vx0, vx1 = view_box(crop, p_first, zoom)
-    cube8 = to_uint8(np.stack([f.image[cy0:cy1, cx0:cx1] for f in frames]), upper, invert)   # one shared scale
-    view = colorize(cube8[:, vy0 - cy0:vy1 - cy0, vx0 - cx0:vx1 - cx0], cmap)
-    off = np.array([vx0, vy0], float)
-    r_px = 15 / scale
-    ring = "#22d3ee" if cmap != "Grayscale" else ("#f59e0b" if not invert else "#0369a1")
-
-    if mode.startswith("▶"):
-        fig = px.imshow(view, animation_frame=0, origin="lower", binary_string=True)
-        sl = fig.layout.sliders[0]
-        for step, f in zip(sl.steps, frames):
-            step.label = f.date
-        sl.currentvalue = dict(prefix="Date: ", font=dict(size=14))
-        sl.pad = dict(t=10)
-        if fig.layout.updatemenus:
-            btn = fig.layout.updatemenus[0].buttons[0].args[1]
-            btn["frame"]["duration"] = int(1000 / speed)
-            btn["transition"] = dict(duration=0)
-        marks = [(p_first, "solid")] + ([(p_last, "dot")] if has_pm else [])
-    else:
-        pick_l = st.radio("Show", [f"Earliest · {frames[0].date}", f"Latest · {frames[-1].date}"], horizontal=True)
-        latest = pick_l.startswith("Latest")
-        fig = px.imshow(view[-1 if latest else 0], origin="lower", binary_string=True)
-        marks = [(p_last if latest else p_first, "solid")] + \
-                ([(p_first if latest else p_last, "dot")] if has_pm else [])
-    for xy, dash in marks:
-        circle(fig, xy - off, r_px, ring, dash)
-    if has_pm:
-        a_, b_ = p_first - off, p_last - off
-        fig.add_shape(type="line", x0=float(a_[0]), y0=float(a_[1]), x1=float(b_[0]), y1=float(b_[1]),
-                      line=dict(color=ring, width=1, dash="dot"))
-    style_sky(fig, 600)
-    st.plotly_chart(fig, use_container_width=True, config=dict(displaylogo=False, scrollZoom=True))
-    _st = CMAPS[cmap] if not invert else [(1 - p, c) for p, c in reversed(CMAPS[cmap])]
-    _grad = ", ".join(f"rgb{c} {int(p * 100)}%" for p, c in _st)
-    st.markdown(f"<div style='height:10px;border-radius:6px;background:linear-gradient(90deg,{_grad})'></div>"
-                "<div style='display:flex;justify-content:space-between;font-size:.75rem;color:#8b96b8'>"
-                "<span>faint</span><span>bright</span></div>", unsafe_allow_html=True)
-
     lo_b, hi_b = sx.BAND_UM[det]
     if has_pm and len(frames) > 1:
         px_move = shift_as / sx.PIXEL_ARCSEC
@@ -384,6 +453,54 @@ with tab_play:
                f"across frames, so a star can change brightness without being variable. "
                "North is up, east is left. Background gradients are removed and every frame shares one "
                "brightness scale.")
+
+    with st.expander("Search these images for possible sources"):
+        st.caption("Looks for bright image peaks near your position. These are candidates, not confirmed objects.")
+        candidate_key = (
+            ra, dec, pmra, pmdec, epoch, det, fov, n_max, bin_days,
+            tuple((f.mjd, f.n) for f in frames),
+        )
+        if st.session_state.get("image_candidates_key") != candidate_key:
+            st.session_state.pop("image_candidates_key", None)
+            st.session_state.pop("image_candidates", None)
+        if st.button("Detect image candidates", key="detect_image_candidates"):
+            with st.spinner("Searching the selected SPHEREx images for bright peaks…"):
+                found = sx.image_candidates(
+                    frames, grid, target, radius_arcmin=min(1.0, fov / 2))
+            st.session_state.image_candidates = found
+            st.session_state.image_candidates_key = candidate_key
+
+        if st.session_state.get("image_candidates_key") == candidate_key:
+            candidates = st.session_state.image_candidates
+            if not candidates:
+                st.info("No strong image peaks were found near this position in the selected color.")
+            else:
+                st.caption("Coordinates are for 2026.0. Peak significance is estimated from image noise.")
+                st.dataframe(
+                    [{
+                        "Candidate": f"Image peak {i + 1}",
+                        "RA (deg)": round(candidate["ra"], 7),
+                        "Dec (deg)": round(candidate["dec"], 7),
+                        "Offset (arcmin)": round(candidate["separation_arcmin"], 3),
+                        "Peak significance (sigma)": round(candidate["snr"], 1),
+                    } for i, candidate in enumerate(candidates)],
+                    hide_index=True,
+                )
+                selected = st.selectbox(
+                    "Candidate to inspect",
+                    range(len(candidates)),
+                    format_func=lambda i: (
+                        f"Candidate {i + 1} · {candidates[i]['ra']:.6f}, "
+                        f"{candidates[i]['dec']:.6f}"
+                    ),
+                    key=f"image_candidate_choice_{det}_{len(frames)}_{bin_days}",
+                )
+                st.button(
+                    "Use selected candidate as the target",
+                    key="use_image_candidate",
+                    on_click=use_image_candidate,
+                    args=(candidates[selected]["ra"], candidates[selected]["dec"]),
+                )
 
 with tab_cmp:
     if len(frames) < 2:

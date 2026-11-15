@@ -22,17 +22,25 @@ independent all-sky surveys. Evarínya turns those raw exposures into something 
   signal-to-noise at your target in each one and picks the clearest. For very bright stars that saturate
   the detector, it picks the color where the least of the star is blanked out, and says so.
 - *Proper motion tracking*: enter a target's motion (mas/yr) and the app draws where it should be on each date.
-- *How to read this*: a plain-language guide to the images, colors, motion markers, and data processing.
+- *Search by name*: use the search at the top of the page to look up a star or object in SIMBAD and fill in its
+  coordinates and available proper motion. Example targets are stacked in a collapsible left-sidebar drawer;
+  the image viewer appears immediately below the search, followed by five horizontal Explore tabs.
+- *Enter coordinates*: the left sidebar has always-visible RA and Dec fields; motion and field-of-view options
+  are grouped under advanced settings.
+- *Image candidates*: find bright nearby peaks in the selected SPHEREx images and inspect their coordinates.
+  These are possible sources, not confirmed objects.
+- *Help*: a plain-language guide to the images, colors, motion markers, and data processing.
 - *Shareable views*: the page address encodes the target, so you can share a link to exactly what you see.
 
 ## Example targets
 
 One-click presets: *Barnard's Star*, *Epsilon Indi B*, *WISE 0855*, *RW Aurigae*, and *R Draconis*.
-You can also enter your own coordinates (degrees, or `17h57m48.5s` / `+04d41m36s`).
+Search SIMBAD by object name or enter coordinates directly (degrees, or `17h57m48.5s` / `+04d41m36s`).
 
 ## How it works
 
-1. Asks the IRSA SIA2 service which SPHEREx exposures cover the target (collections `spherex_dr1`, `spherex_qr3`).
+1. Asks IRSA for its current wide-survey collections and which SPHEREx exposures cover the target, querying
+   collections separately and preferring the newest copy when exposures overlap.
 2. Downloads a small cutout of each selected exposure from IRSA instead of the full multi-megabyte image.
 3. Removes zodiacal light, masks flagged pixels, subtracts a smooth background, and reprojects every exposure
    onto one common grid.
