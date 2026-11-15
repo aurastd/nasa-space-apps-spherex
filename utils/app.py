@@ -204,6 +204,7 @@ def _set(p, tip=""):
 
 def pick(name):
     _set(PRESETS[name], PRESETS[name]["tip"])
+    st.session_state.name_search = ""
 
 
 def use_image_candidate(ra, dec):
