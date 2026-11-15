@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import spherex_data as sx
-from presets import DEFAULT, PRESETS
+from presets import PRESETS
 
 st.set_page_config(page_title="Evarínya – SPHEREx Sky Viewer", page_icon="🌌", layout="wide",
                    initial_sidebar_state="expanded")
@@ -213,7 +213,7 @@ def use_image_candidate(ra, dec):
 
 
 if "ra" not in st.session_state:
-    _set(PRESETS[DEFAULT], PRESETS[DEFAULT]["tip"])
+    st.session_state.update(ra="", dec="", fov=12.0, pmra=0.0, pmdec=0.0, epoch=2000.0, tip="")
     qp = st.query_params
     if "ra" in qp:
         try:
@@ -278,8 +278,15 @@ with st.sidebar.expander("Advanced settings · motion and field of view"):
     st.number_input("Position is for year", key="epoch", step=1.0, format="%.1f",
                     help="Catalog positions are usually for the year 2000.")
 
+ra_input = str(st.session_state.ra).strip()
+dec_input = str(st.session_state.dec).strip()
+if not ra_input or not dec_input:
+    st.query_params.clear()
+    st.info("Search for an object, choose an example, or enter both RA and Dec to load the sky viewer.")
+    st.stop()
+
 try:
-    coord = sx.parse_coord(st.session_state.ra, st.session_state.dec)
+    coord = sx.parse_coord(ra_input, dec_input)
 except Exception:
     st.error("I couldn't read those coordinates. Try something like 269.45 and 4.69.")
     st.stop()
