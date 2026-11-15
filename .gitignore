@@ -1,5 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+_pycache_/
+*.pyc
 *.py[codz]
 *$py.class
 
@@ -152,6 +154,7 @@ activemq-data/
 # Environments
 .env
 .envrc
+.venv/
 .venv
 env/
 venv/
@@ -220,4 +223,6 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Downloaded SPHEREx cache
+cache/
+utils/cache/
 **/cache/

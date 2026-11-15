@@ -1,11 +1,11 @@
-# 🌌 Evarínya: SPHEREx Sky Viewer
+# Evarínya: Watch the Infrared Sky Change
+
+![Evarínya screenshot](docs/screenshot.png)
 
 Watch the infrared sky change over time, using *real images from NASA's SPHEREx mission*.
 Pick a target, press play, and spot what moves.
 
 > Built for the NASA Space Apps Challenge.
-
-<!-- Add a screenshot or GIF here, e.g. ![Evarínya](docs/screenshot.png) -->
 
 ## What it does
 
@@ -107,4 +107,25 @@ python utils/spherex_data.py "17h57m48.5s" "+04d41m36s" 12
 - Data: [NASA/IPAC Infrared Science Archive (IRSA)](https://irsa.ipac.caltech.edu/), SPHEREx DR1 and QR3
   spectral images (wide survey).
 - Mission: [NASA SPHEREx](https://spherex.caltech.edu/).
-- Built with Streamlit, Plotly, NumPy, Astropy, PyVO, SciPy, Requests, Pillow, and Reproject.
+- Built with Streamlit, Plotly, NumPy, Astropy, Astroquery, PyVO, SciPy, Requests, Pillow, and Reproject.
+
+SPHEREx acknowledgement requested by IRSA:
+
+> “This publication makes use of data products from the Spectro-Photometer for the History of the Universe,
+> Epoch of Reionization and Ices Explorer (SPHEREx), which is a joint project of the Jet Propulsion Laboratory
+> and the California Institute of Technology, and is funded by the National Aeronautics and Space Administration.”
+
+## Future work
+
+- Overlay Gaia and WISE catalog sources on the images.
+- Cross-match the target with Gaia to confirm known sources and fill in proper motion.
+- Add an AI explainer for what the user is seeing.
+- Prefetch more targets for offline use.
+
+## Team
+
+- [Team member names]
+
+## AI use disclosure
+
+Generative AI (Claude and GitHub Copilot) assisted with writing and debugging the code and documentation. The team chose the design, tested the app against real SPHEREx data, and reviewed the results. No observations were simulated or generated; all images come from the NASA/IPAC IRSA archive.
