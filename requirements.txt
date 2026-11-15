@@ -2,5 +2,10 @@ streamlit
 astropy
 numpy
 pandas
-astroquery
 pyvo
+plotly
+pillow
+reproject
+requests
+scipy
+astroquery
