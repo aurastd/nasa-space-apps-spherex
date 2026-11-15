@@ -56,6 +56,7 @@ STAR_CSS = f"""
     border-radius: 14px; backdrop-filter: blur(6px); }}
 [data-testid="stExpander"] {{ background: rgba(13,18,36,.55); border: 1px solid rgba(147,197,253,.18);
     border-radius: 14px; backdrop-filter: blur(6px); }}
+[data-testid="stSidebar"] {{ background: rgba(8,12,28,.82); backdrop-filter: blur(8px); border-right: 1px solid rgba(147,197,253,.15); }}
 [data-baseweb="select"] > div {{ background: rgba(13,18,36,.65); border-radius: 10px; }}
 [data-baseweb="tab-list"] {{ gap: .4rem; }}
 button[data-baseweb="tab"] {{ border-radius: 10px 10px 0 0; }}
@@ -70,6 +71,25 @@ st.markdown(STAR_CSS, unsafe_allow_html=True)
 @st.cache_data(show_spinner=False)
 def get_rows(ra, dec, pmra, pmdec, epoch):
     return sx.query_rows(sx.Target(ra, dec, pmra, pmdec, epoch))
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def lookup_name(ra, dec, radius_arcsec=15.0):
+    """Name of the catalogued object at this J2000 position, from SIMBAD (None if unknown or offline)."""
+    try:
+        from astroquery.simbad import Simbad
+        import astropy.units as u
+        from astropy.coordinates import SkyCoord
+        simbad = Simbad()
+        simbad.server = "simbad.harvard.edu"
+        simbad.timeout = 20
+        res = simbad.query_region(SkyCoord(ra * u.deg, dec * u.deg), radius=radius_arcsec * u.arcsec)
+        if res is None or len(res) == 0:
+            return None
+        cols = {c.lower(): c for c in res.colnames}
+        return str(res[cols["main_id"]][0]).strip()
+    except Exception:
+        return None
 
 
 class AutoColorFailed(Exception):
@@ -102,6 +122,26 @@ def to_uint8(cube, upper_pct, invert):
     x = np.nan_to_num(np.arcsinh(10 * x) / np.arcsinh(10), nan=0.0)
     x = (255 * x).astype(np.uint8)
     return 255 - x if invert else x
+
+
+CMAPS = {
+    "Grayscale": [(0, (0, 0, 0)), (1, (255, 255, 255))],
+    "Heat (black → red → yellow → white)": [(0, (0, 0, 0)), (.33, (190, 20, 10)),
+                                            (.66, (255, 190, 30)), (1, (255, 255, 235))],
+    "Ice (black → blue → white)": [(0, (0, 0, 0)), (.5, (30, 90, 200)), (1, (235, 245, 255))],
+    "Rainbow (blue → green → yellow → red)": [(0, (10, 10, 90)), (.25, (30, 120, 220)),
+                                              (.5, (40, 200, 120)), (.75, (250, 220, 40)),
+                                              (1, (230, 40, 30))],
+}
+
+
+def colorize(img8, name):
+    """False color: map brightness (0-255) to a color scale. Returns an RGB uint8 array."""
+    stops = CMAPS[name]
+    xs = [p for p, _ in stops]
+    lut = np.stack([np.interp(np.arange(256) / 255, xs, [c[i] for _, c in stops]) for i in range(3)],
+                   axis=1).astype(np.uint8)
+    return lut[img8]
 
 
 def view_box(crop, center, zoom):
@@ -156,19 +196,19 @@ st.markdown(
     "<p>Watch the infrared sky change over time, using real SPHEREx images.</p>"
     "<div class='steps'>① pick a target &nbsp;·&nbsp; ② press play &nbsp;·&nbsp; ③ spot what moves</div></div>",
     unsafe_allow_html=True)
-st.caption("✦ Try an example")
-for col, name in zip(st.columns(len(PRESETS)), PRESETS):
-    col.button(name, on_click=pick, args=(name,), use_container_width=True)
+st.sidebar.caption("✦ Try an example")
+for name in PRESETS:
+    st.sidebar.button(name, on_click=pick, args=(name,), use_container_width=True)
 if st.session_state.tip:
-    st.info(st.session_state.tip)
+    st.sidebar.info(st.session_state.tip)
 
-with st.expander("Or enter your own coordinates"):
-    c1, c2, c3 = st.columns(3)
+with st.sidebar.expander("Or enter your own coordinates"):
+    c1 = c2 = c3 = st
     c1.text_input("Right ascension", key="ra", help="Degrees (269.45) or hours (17h57m48.5s)")
     c2.text_input("Declination", key="dec", help="Degrees (4.69) or d m s (+04d41m36s)")
     c3.slider("How wide an area? (arcminutes)", 1.0, 30.0, key="fov", step=0.5,
               help="Wider areas let you follow faster-moving objects, but load more slowly.")
-    d1, d2, d3 = st.columns(3)
+    d1 = d2 = d3 = st
     d1.number_input("Motion in RA (mas/yr)", key="pmra", step=10.0, format="%.1f",
                     help="Optional. If you know the object's proper motion, the tool shows where it should be.")
     d2.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f")
@@ -185,6 +225,12 @@ ra, dec, fov = float(coord.ra.deg), float(coord.dec.deg), float(st.session_state
 pmra, pmdec, epoch = float(st.session_state.pmra), float(st.session_state.pmdec), float(st.session_state.epoch)
 has_pm = bool(pmra or pmdec)
 target = sx.Target(ra, dec, pmra, pmdec, epoch)
+_c2000 = sx.propagate(coord, pmra, pmdec, epoch, 2000.0) if epoch != 2000.0 else coord
+_name = lookup_name(float(_c2000.ra.deg), float(_c2000.dec.deg))
+if _name:
+    st.caption(f"📍 Known object here: **{_name}** (from SIMBAD)")
+else:
+    st.caption("📍 No catalogued object found at this position (it may be very faint, or the position is slightly off).")
 st.query_params.update(ra=st.session_state.ra, dec=st.session_state.dec, fov=str(fov),
                        pmra=str(pmra), pmdec=str(pmdec), epoch=str(epoch))
 
@@ -202,7 +248,7 @@ if not rows:
 counts = {d: sum(r["det"] == d for r in rows) for d in sx.BAND_UM}
 
 # ---------------------------------------------------------------- controls
-c1, c2 = st.columns(2)
+c1 = c2 = st.sidebar
 choice = c1.selectbox(
     "Color of light", [None] + [d for d in sx.BAND_UM if counts[d]],
     format_func=lambda d: "Automatic: clearest view" if d is None
@@ -211,10 +257,12 @@ choice = c1.selectbox(
          "one where your target stands out best; you can choose another.")
 bin_days = c2.slider("Combine images taken within … days", 0, 30, 10,
                      help="Adding images together reduces noise, so faint things show up.")
-c3, c4, c5 = st.columns(3)
+c3 = c4 = c5 = st.sidebar
 n_max = c3.slider("Max images per color", 10, 150, 40, help="More images: smoother but slower to download.")
 upper = c4.slider("Brightness scale", 90.0, 99.99, 99.5)
 invert = c5.checkbox("Dark stars on light", value=False)
+cmap = c5.selectbox("Color map", list(CMAPS), index=1,
+                    help="False color: brightness is shown as color, because each SPHEREx image is a single wavelength.")
 
 if choice is None:
     with st.spinner("Finding the clearest color (downloads a few small patches)…"):
@@ -266,8 +314,8 @@ labels = [f"{i + 1}. {f.date} · {f.wavelength_um:.2f} µm" + (f" · ×{f.n}" if
           for i, f in enumerate(frames)]
 
 # ---------------------------------------------------------------- tabs
-tab_play, tab_cmp, tab_spec, tab_info = st.tabs(
-    ["▶ Watch it change", "Compare two dates", "Colors of light", "About this data"])
+tab_play, tab_cmp, tab_spec, tab_info, tab_guide = st.tabs(
+    ["▶ Watch it change", "Compare two dates", "Colors of light", "About this data", "📖 How to read this"])
 
 crop = sx.common_crop(frames)
 cy0, cy1, cx0, cx1 = crop
@@ -285,10 +333,10 @@ with tab_play:
 
     vy0, vy1, vx0, vx1 = view_box(crop, p_first, zoom)
     cube8 = to_uint8(np.stack([f.image[cy0:cy1, cx0:cx1] for f in frames]), upper, invert)   # one shared scale
-    view = cube8[:, vy0 - cy0:vy1 - cy0, vx0 - cx0:vx1 - cx0]
+    view = colorize(cube8[:, vy0 - cy0:vy1 - cy0, vx0 - cx0:vx1 - cx0], cmap)
     off = np.array([vx0, vy0], float)
     r_px = 15 / scale
-    ring = "#f59e0b" if not invert else "#0369a1"
+    ring = "#22d3ee" if cmap != "Grayscale" else ("#f59e0b" if not invert else "#0369a1")
 
     if mode.startswith("▶"):
         fig = px.imshow(view, animation_frame=0, origin="lower", binary_string=True)
@@ -316,6 +364,11 @@ with tab_play:
                       line=dict(color=ring, width=1, dash="dot"))
     style_sky(fig, 600)
     st.plotly_chart(fig, use_container_width=True, config=dict(displaylogo=False, scrollZoom=True))
+    _st = CMAPS[cmap] if not invert else [(1 - p, c) for p, c in reversed(CMAPS[cmap])]
+    _grad = ", ".join(f"rgb{c} {int(p * 100)}%" for p, c in _st)
+    st.markdown(f"<div style='height:10px;border-radius:6px;background:linear-gradient(90deg,{_grad})'></div>"
+                "<div style='display:flex;justify-content:space-between;font-size:.75rem;color:#8b96b8'>"
+                "<span>faint</span><span>bright</span></div>", unsafe_allow_html=True)
 
     lo_b, hi_b = sx.BAND_UM[det]
     if has_pm and len(frames) > 1:
@@ -393,3 +446,102 @@ with tab_info:
     st.caption("Data: NASA/IPAC Infrared Science Archive, SPHEREx DR1 and QR3 spectral images (wide survey). "
                "Zodiacal light is subtracted and flagged pixels are masked. To share this view, copy the "
                "page address; add &embed=true to embed it.")
+
+with tab_guide:
+    _e = st.expander("1. What am I looking at?", expanded=True)
+    _e.markdown(
+        "These are **real infrared images from NASA's SPHEREx space telescope**, launched on 11 March 2025. "
+        "SPHEREx maps the whole sky in **102 infrared spectral channels**, from 0.75 to 5.0 micrometres (µm). "
+        "Our eyes see only a small part of this light. The nominal 25-month mission plans four independent "
+        "all-sky surveys. Each region is typically completed over a few days during a survey pass; the actual "
+        "time between observations of a particular target varies.")
+
+    _e = st.expander("2. Why is it grey (or red, yellow, blue)?")
+    _e.markdown(
+        "A SPHEREx image records **how much infrared light arrived at each pixel**; it does not record visible "
+        "color. The image values are brightness measurements, in MJy/sr (megajanskys per steradian).\n\n"
+        "- **Grayscale:** dark = faint, white = bright.\n"
+        "- **Heat, Ice, or Rainbow:** the same brightness mapped to colors so differences are easier to see. "
+        "This is called *false color*. Here, color represents **brightness**, not the star's real color or its "
+        "temperature. The faint-to-bright bar shows the mapping; changing the selected infrared range is a "
+        "separate control.")
+
+    _e = st.expander("3. What does “Color of light” choose?")
+    _e.markdown(
+        "SPHEREx has six detectors, each covering 17 of the mission's 102 spectral channels. The app groups "
+        "those channels into six detector ranges. Choose one to view; each exposure measures the target at a "
+        "specific wavelength within that range.")
+    _e.dataframe(
+        [{"Detector": d, "Wavelength range (µm)": f"{lo:.2f}–{hi:.2f}"}
+         for d, (lo, hi) in sx.BAND_UM.items()],
+        hide_index=True,
+    )
+    _e.markdown(
+        "**Automatic** samples a few exposures in each available detector range and chooses the one where the "
+        "target has the strongest signal compared with the background noise.")
+
+    _e = st.expander("4. Why can a star change brightness between frames?")
+    _e.markdown(
+        "SPHEREx uses a *linear variable filter*: wavelength changes across the field of view. As the telescope "
+        "points in different directions, a target is measured at different positions on the filter and therefore "
+        "at slightly different wavelengths. A star can get brighter or fainter between frames **without being a "
+        "variable star**. The wavelength for each frame is listed in *About this data*.")
+
+    _e = st.expander("5. What is moving? What are the ring and dotted line?")
+    _e.markdown(
+        "Most stars appear fixed, but nearby stars can have **proper motion**: a slow drift across the sky, "
+        "entered in milliarcseconds per year (mas/yr). Barnard's Star moves about 10 arcseconds per year, while "
+        "one SPHEREx pixel is 6.15 arcseconds wide.\n\n"
+        "- The **solid ring** marks the predicted starting position in the animation, or the selected date in "
+        "*Earliest vs latest*.\n"
+        "- When motion is entered, the **dotted ring** marks the predicted position at the other end of the "
+        "date range, and the dotted line shows the predicted path.\n"
+        "- If the target does not line up, check its coordinates, proper motion, and coordinate epoch.")
+
+    _e = st.expander("6. Compare two dates")
+    _e.markdown(
+        "The app subtracts the earlier image from the later one. Unchanged stars mostly cancel out. "
+        "**Red** means brighter later; **blue** means brighter earlier. A moving source can appear as a blue "
+        "and red pair. Wavelength differences between the two frames can also change a star's apparent "
+        "brightness.")
+
+    _e = st.expander("7. Colors of light (the spectrum)")
+    _e.markdown(
+        "Each exposure provides one brightness measurement at one wavelength. Together, the measurements form "
+        "a rough **spectrum**: brightness versus wavelength. The app uses aperture photometry: it sums the "
+        "signal in a small circle around the target and subtracts an estimate of the nearby sky. This is useful "
+        "for comparing colors, not for precise or calibrated brightness.")
+
+    _e = st.expander("8. Signal-to-noise (S/N)")
+    _e.markdown(
+        "S/N describes how strongly a target stands out from background noise. An S/N of 10 means the measured "
+        "signal is about ten times the estimated noise. In this app, the estimate uses the scatter in nearby sky "
+        "pixels and the number of pixels in the measurement aperture. As a rough rule of thumb, astronomers often "
+        "look for S/N of 3–5 or more; this app labels the best result as faint when its S/N is below 3.")
+
+    _e = st.expander("9. Why are there black patches or missing stars?")
+    _e.markdown(
+        "The data flags pixels that are unreliable, including pixels affected by events such as cosmic rays or "
+        "saturation. The app masks flagged pixels and crops edges where the exposures do not overlap. A very "
+        "bright star can saturate the detector, leaving its center blank. Very faint sources may not stand out "
+        "in a single exposure; try another infrared range or combine more images.")
+
+    _e = st.expander("10. What does this app do to the data?")
+    _e.markdown(
+        "1. Asks IRSA (NASA/IPAC's Infrared Science Archive) which exposures cover the target, then downloads "
+        "small image cutouts.\n"
+        "2. Subtracts the supplied model of **zodiacal light** (sunlight scattered by dust in our solar system).\n"
+        "3. Masks flagged pixels, removes the remaining smooth background, and aligns the exposures on a "
+        "common north-up grid.\n"
+        "4. Crops to the region shared by the frames and uses one brightness scale so frames can be compared. "
+        "The brightness-scale control changes the display stretch.\n"
+        "5. Optionally combines nearby-in-time exposures using a **median**, which helps reduce noise.")
+
+    _e = st.expander("Sources")
+    _e.markdown(
+        "- NASA SPHEREx mission: https://www.nasa.gov/missions/spherex/\n"
+        "- SPHEREx survey and observing strategy: https://spherex.caltech.edu/page/survey\n"
+        "- IRSA SPHEREx data products: "
+        "https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products\n"
+        "- IRSA SPHEREx tutorial: https://caltech-ipac.github.io/irsa-tutorials/spherex-intro\n"
+        "- Bock et al., *The SPHEREx Satellite Mission*: https://arxiv.org/abs/2511.02985")

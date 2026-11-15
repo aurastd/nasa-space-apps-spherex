@@ -9,8 +9,8 @@ Pick a target, press play, and spot what moves.
 
 ## What it does
 
-SPHEREx scans the whole sky in 102 infrared colors, revisiting every spot many times. Evarínya turns those
-raw exposures into something you can look at and explore:
+SPHEREx maps the whole sky in 102 infrared spectral channels. Its nominal 25-month mission plans four
+independent all-sky surveys. Evarínya turns those raw exposures into something you can look at and explore:
 
 - *Watch it change*: an animation of selected exposures covering your target, aligned onto one north-up grid.
   Fast movers (like Barnard's Star) visibly drift across the frame.
@@ -22,6 +22,7 @@ raw exposures into something you can look at and explore:
   signal-to-noise at your target in each one and picks the clearest. For very bright stars that saturate
   the detector, it picks the color where the least of the star is blanked out, and says so.
 - *Proper motion tracking*: enter a target's motion (mas/yr) and the app draws where it should be on each date.
+- *How to read this*: a plain-language guide to the images, colors, motion markers, and data processing.
 - *Shareable views*: the page address encodes the target, so you can share a link to exactly what you see.
 
 ## Example targets
@@ -35,8 +36,8 @@ You can also enter your own coordinates (degrees, or `17h57m48.5s` / `+04d41m36s
 2. Downloads a small cutout of each selected exposure from IRSA instead of the full multi-megabyte image.
 3. Removes zodiacal light, masks flagged pixels, subtracts a smooth background, and reprojects every exposure
    onto one common grid.
-4. Crops to the area where all frames have data, applies one shared brightness scale, and optionally stacks
-   exposures taken within a few days to reduce noise.
+4. Crops to the area where all frames have data, applies one shared brightness scale, and optionally median-stacks
+   exposures taken within a chosen time window to reduce noise.
 
 Downloads are cached in `utils/cache/`, so repeat runs are fast and work offline.
 
