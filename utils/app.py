@@ -398,7 +398,7 @@ image_container = viewer_slot.container()
 m1, m2 = image_container.columns([3, 2])
 mode = m1.radio("View", ["▶ Animate", "⇄ Earliest vs latest"], horizontal=True, label_visibility="collapsed")
 zoom = m2.slider("Zoom", 1.0, 4.0, 1.0, 0.5, help="Zoom in on the target.")
-speed = image_container.slider("Speed", 1, 10, 3) if mode.startswith("▶") else None
+speed = image_container.slider("Speed", 1, 10, 3) if mode.startswith("▶") and len(frames) > 1 else None
 
 vy0, vy1, vx0, vx1 = view_box(crop, p_first, zoom)
 cube8 = to_uint8(np.stack([f.image[cy0:cy1, cx0:cx1] for f in frames]), upper, invert)
@@ -409,15 +409,18 @@ ring = "#22d3ee" if cmap != "Grayscale" else ("#f59e0b" if not invert else "#036
 
 if mode.startswith("▶"):
     fig = px.imshow(view, animation_frame=0, origin="lower", binary_string=True)
-    sl = fig.layout.sliders[0]
-    for step, f in zip(sl.steps, frames):
-        step.label = f.date
-    sl.currentvalue = dict(prefix="Date: ", font=dict(size=14))
-    sl.pad = dict(t=10)
-    if fig.layout.updatemenus:
-        btn = fig.layout.updatemenus[0].buttons[0].args[1]
-        btn["frame"]["duration"] = int(1000 / speed)
-        btn["transition"] = dict(duration=0)
+    if fig.layout.sliders:
+        sl = fig.layout.sliders[0]
+        for step, f in zip(sl.steps, frames):
+            step.label = f.date
+        sl.currentvalue = dict(prefix="Date: ", font=dict(size=14))
+        sl.pad = dict(t=10)
+        if fig.layout.updatemenus:
+            btn = fig.layout.updatemenus[0].buttons[0].args[1]
+            btn["frame"]["duration"] = int(1000 / speed)
+            btn["transition"] = dict(duration=0)
+    elif len(frames) == 1:
+        image_container.caption("Only one image is available for this target, so it is shown as a still frame.")
     marks = [(p_first, "solid")] + ([(p_last, "dot")] if has_pm else [])
 else:
     pick_l = image_container.radio(
