@@ -1,7 +1,5 @@
 # Evarínya: Watch the Infrared Sky Change
 
-![Evarínya screenshot](docs/screenshot.png)
-
 Watch the infrared sky change over time, using *real images from NASA's SPHEREx mission*.
 Pick a target, press play, and spot what moves.
 
