@@ -125,6 +125,6 @@ SPHEREx acknowledgement requested by IRSA:
 - Benekeng a Yombo Micheline Diane
 - Nde Tine Tagu Christ Junior
 
-## AI use disclosure
+## Super Intelligence
 
 Generative AI (Claude and GitHub Copilot) assisted with writing and debugging the code and documentation. The team chose the design, tested the app against real SPHEREx data, and reviewed the results. No observations were simulated or generated; all images come from the NASA/IPAC IRSA archive.
