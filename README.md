@@ -124,7 +124,8 @@ SPHEREx acknowledgement requested by IRSA:
 
 ## Team
 
-- [Team member names]
+- Benekeng a Yombo Micheline Diane
+- Nde Tine Tagu Christ Junior
 
 ## AI use disclosure
 
