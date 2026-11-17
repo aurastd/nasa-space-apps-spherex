@@ -104,6 +104,10 @@ python utils/spherex_data.py "17h57m48.5s" "+04d41m36s" 12
 
 - Data: [NASA/IPAC Infrared Science Archive (IRSA)](https://irsa.ipac.caltech.edu/), SPHEREx DR1 and QR3
   spectral images (wide survey).
+- Object-name and nearby-object lookups: [SIMBAD Astronomical Database](https://simbad.cds.unistra.fr/simbad/),
+  operated by the Centre de Données astronomiques de Strasbourg (CDS).
+- SIMBAD reference: Wenger et al. (2000), *Astronomy and Astrophysics Supplement Series*, 143, 9:
+  https://doi.org/10.1051/aas:2000332.
 - Mission: [NASA SPHEREx](https://spherex.caltech.edu/).
 - Built with Streamlit, Plotly, NumPy, Astropy, Astroquery, PyVO, SciPy, Requests, Pillow, and Reproject.
 

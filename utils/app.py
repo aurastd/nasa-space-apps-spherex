@@ -672,4 +672,8 @@ with tab_guide:
         "- IRSA SPHEREx data products: "
         "https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products\n"
         "- IRSA SPHEREx tutorial: https://caltech-ipac.github.io/irsa-tutorials/spherex-intro\n"
+        "- SIMBAD Astronomical Database (CDS), for object-name and nearby-object lookups: "
+        "https://simbad.cds.unistra.fr/simbad/\n"
+        "- SIMBAD reference: Wenger et al. (2000), A&AS, 143, 9: "
+        "https://doi.org/10.1051/aas:2000332\n"
         "- Bock et al., *The SPHEREx Satellite Mission*: https://arxiv.org/abs/2511.02985")
