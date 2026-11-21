@@ -205,6 +205,10 @@ def pick(name):
     st.session_state.name_search = ""
 
 
+def clear_tip():
+    st.session_state.tip = ""
+
+
 def use_image_candidate(ra, dec):
     st.session_state.update(ra=f"{ra:.8f}", dec=f"{dec:.8f}", pmra=0.0, pmdec=0.0,
                             epoch=sx.T_REF, tip="")
@@ -244,6 +248,7 @@ if submitted_name:
                 st.session_state.pmra = resolved["pmra"]
                 st.session_state.pmdec = resolved["pmdec"]
                 st.session_state.epoch = 2000.0
+                st.session_state.tip = ""
                 st.success(f"Found {resolved['name']}; coordinates and motion filled in.")
 
 viewer_slot = st.empty()
@@ -256,17 +261,18 @@ if st.session_state.tip:
 
 st.sidebar.markdown("### Enter coordinates manually")
 st.sidebar.text_input("Right ascension (RA)", key="ra",
-                      help="Enter degrees (269.45) or hours (17h57m48.5s).")
+                      help="Enter degrees (269.45) or hours (17h57m48.5s).", on_change=clear_tip)
 st.sidebar.text_input("Declination (Dec)", key="dec",
-                      help="Enter degrees (4.69) or degrees, minutes, seconds (+04d41m36s).")
+                      help="Enter degrees (4.69) or degrees, minutes, seconds (+04d41m36s).", on_change=clear_tip)
 with st.sidebar.expander("Advanced settings · motion and field of view"):
     st.slider("How wide an area? (arcminutes)", 1.0, 30.0, key="fov", step=0.5,
               help="Wider areas let you follow faster-moving objects, but load more slowly.")
     st.number_input("Motion in RA (mas/yr)", key="pmra", step=10.0, format="%.1f",
-                    help="Optional. If you know the object's proper motion, the tool shows where it should be.")
-    st.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f")
+                    help="Optional. If you know the object's proper motion, the tool shows where it should be.",
+                    on_change=clear_tip)
+    st.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f", on_change=clear_tip)
     st.number_input("Position is for year", key="epoch", step=1.0, format="%.1f",
-                    help="Catalog positions are usually for the year 2000.")
+                    help="Catalog positions are usually for the year 2000.", on_change=clear_tip)
 
 ra_input = str(st.session_state.ra).strip()
 dec_input = str(st.session_state.dec).strip()
