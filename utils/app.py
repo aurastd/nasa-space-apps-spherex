@@ -75,21 +75,19 @@ def get_rows(ra, dec, pmra, pmdec, epoch):
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def lookup_name(ra, dec, radius_arcsec=15.0):
-    """Name of the catalogued object at this J2000 position, from SIMBAD (None if unknown or offline)."""
-    try:
-        from astroquery.simbad import Simbad
-        import astropy.units as u
-        from astropy.coordinates import SkyCoord
-        simbad = Simbad()
-        simbad.server = "simbad.harvard.edu"
-        simbad.timeout = 20
-        res = simbad.query_region(SkyCoord(ra * u.deg, dec * u.deg), radius=radius_arcsec * u.arcsec)
-        if res is None or len(res) == 0:
-            return None
-        cols = {c.lower(): c for c in res.colnames}
-        return str(res[cols["main_id"]][0]).strip()
-    except Exception:
+    """Return the nearest SIMBAD identifier, or None when no object is returned."""
+    from astroquery.simbad import Simbad
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+
+    simbad = Simbad()
+    simbad.server = "simbad.harvard.edu"
+    simbad.timeout = 20
+    res = simbad.query_region(SkyCoord(ra * u.deg, dec * u.deg), radius=radius_arcsec * u.arcsec)
+    if res is None or len(res) == 0:
         return None
+    cols = {c.lower(): c for c in res.colnames}
+    return str(res[cols["main_id"]][0]).strip()
 
 
 @st.cache_data(show_spinner=False, ttl=86400)
@@ -296,11 +294,15 @@ pmra, pmdec, epoch = float(st.session_state.pmra), float(st.session_state.pmdec)
 has_pm = bool(pmra or pmdec)
 target = sx.Target(ra, dec, pmra, pmdec, epoch)
 _c2000 = sx.propagate(coord, pmra, pmdec, epoch, 2000.0) if epoch != 2000.0 else coord
-_name = lookup_name(float(_c2000.ra.deg), float(_c2000.dec.deg))
-if _name:
-    st.caption(f"📍 Known object here: **{_name}** (from SIMBAD)")
+try:
+    _name = lookup_name(float(_c2000.ra.deg), float(_c2000.dec.deg))
+except Exception as exc:
+    st.warning(f"SIMBAD lookup failed ({type(exc).__name__}: {str(exc)[:200]}). The SPHEREx view is unaffected.")
 else:
-    st.caption("📍 No catalogued object found at this position (it may be very faint, or the position is slightly off).")
+    if _name:
+        st.caption(f"📍 Known object here: **{_name}** (from SIMBAD)")
+    else:
+        st.caption("📍 No catalogued object found at this position (it may be very faint, or the position is slightly off).")
 st.query_params.update(ra=st.session_state.ra, dec=st.session_state.dec, fov=str(fov),
                        pmra=str(pmra), pmdec=str(pmdec), epoch=str(epoch))
 
