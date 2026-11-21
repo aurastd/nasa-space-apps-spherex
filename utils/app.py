@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import spherex_data as sx
-from presets import DEFAULT, PRESETS
+from presets import PRESETS
 
 st.set_page_config(page_title="Evarínya – SPHEREx Sky Viewer", page_icon="🌌", layout="wide",
                    initial_sidebar_state="expanded")
@@ -75,21 +75,19 @@ def get_rows(ra, dec, pmra, pmdec, epoch):
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def lookup_name(ra, dec, radius_arcsec=15.0):
-    """Name of the catalogued object at this J2000 position, from SIMBAD (None if unknown or offline)."""
-    try:
-        from astroquery.simbad import Simbad
-        import astropy.units as u
-        from astropy.coordinates import SkyCoord
-        simbad = Simbad()
-        simbad.server = "simbad.harvard.edu"
-        simbad.timeout = 20
-        res = simbad.query_region(SkyCoord(ra * u.deg, dec * u.deg), radius=radius_arcsec * u.arcsec)
-        if res is None or len(res) == 0:
-            return None
-        cols = {c.lower(): c for c in res.colnames}
-        return str(res[cols["main_id"]][0]).strip()
-    except Exception:
+    """Return the nearest SIMBAD identifier, or None when no object is returned."""
+    from astroquery.simbad import Simbad
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+
+    simbad = Simbad()
+    simbad.server = "simbad.harvard.edu"
+    simbad.timeout = 20
+    res = simbad.query_region(SkyCoord(ra * u.deg, dec * u.deg), radius=radius_arcsec * u.arcsec)
+    if res is None or len(res) == 0:
         return None
+    cols = {c.lower(): c for c in res.colnames}
+    return str(res[cols["main_id"]][0]).strip()
 
 
 @st.cache_data(show_spinner=False, ttl=86400)
@@ -204,6 +202,11 @@ def _set(p, tip=""):
 
 def pick(name):
     _set(PRESETS[name], PRESETS[name]["tip"])
+    st.session_state.name_search = ""
+
+
+def clear_tip():
+    st.session_state.tip = ""
 
 
 def use_image_candidate(ra, dec):
@@ -211,17 +214,9 @@ def use_image_candidate(ra, dec):
                             epoch=sx.T_REF, tip="")
 
 
-if "ra" not in st.session_state:
-    _set(PRESETS[DEFAULT], PRESETS[DEFAULT]["tip"])
-    qp = st.query_params
-    if "ra" in qp:
-        try:
-            st.session_state.update(
-                ra=qp["ra"], dec=qp.get("dec", "0"), fov=min(max(float(qp.get("fov", 12)), 1.0), 30.0),
-                pmra=float(qp.get("pmra", 0)), pmdec=float(qp.get("pmdec", 0)),
-                epoch=float(qp.get("epoch", 2000)), tip="")
-        except ValueError:
-            pass
+if "target_state_initialized" not in st.session_state:
+    st.session_state.update(ra="", dec="", fov=12.0, pmra=0.0, pmdec=0.0, epoch=2000.0, tip="")
+    st.session_state.target_state_initialized = True
 
 # ---------------------------------------------------------------- header
 st.markdown(
@@ -253,6 +248,7 @@ if submitted_name:
                 st.session_state.pmra = resolved["pmra"]
                 st.session_state.pmdec = resolved["pmdec"]
                 st.session_state.epoch = 2000.0
+                st.session_state.tip = ""
                 st.success(f"Found {resolved['name']}; coordinates and motion filled in.")
 
 viewer_slot = st.empty()
@@ -265,20 +261,28 @@ if st.session_state.tip:
 
 st.sidebar.markdown("### Enter coordinates manually")
 st.sidebar.text_input("Right ascension (RA)", key="ra",
-                      help="Enter degrees (269.45) or hours (17h57m48.5s).")
+                      help="Enter degrees (269.45) or hours (17h57m48.5s).", on_change=clear_tip)
 st.sidebar.text_input("Declination (Dec)", key="dec",
-                      help="Enter degrees (4.69) or degrees, minutes, seconds (+04d41m36s).")
+                      help="Enter degrees (4.69) or degrees, minutes, seconds (+04d41m36s).", on_change=clear_tip)
 with st.sidebar.expander("Advanced settings · motion and field of view"):
     st.slider("How wide an area? (arcminutes)", 1.0, 30.0, key="fov", step=0.5,
               help="Wider areas let you follow faster-moving objects, but load more slowly.")
     st.number_input("Motion in RA (mas/yr)", key="pmra", step=10.0, format="%.1f",
-                    help="Optional. If you know the object's proper motion, the tool shows where it should be.")
-    st.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f")
+                    help="Optional. If you know the object's proper motion, the tool shows where it should be.",
+                    on_change=clear_tip)
+    st.number_input("Motion in Dec (mas/yr)", key="pmdec", step=10.0, format="%.1f", on_change=clear_tip)
     st.number_input("Position is for year", key="epoch", step=1.0, format="%.1f",
-                    help="Catalog positions are usually for the year 2000.")
+                    help="Catalog positions are usually for the year 2000.", on_change=clear_tip)
+
+ra_input = str(st.session_state.ra).strip()
+dec_input = str(st.session_state.dec).strip()
+if not ra_input or not dec_input:
+    st.query_params.clear()
+    st.info("Search for an object, choose an example, or enter both RA and Dec to load the sky viewer.")
+    st.stop()
 
 try:
-    coord = sx.parse_coord(st.session_state.ra, st.session_state.dec)
+    coord = sx.parse_coord(ra_input, dec_input)
 except Exception:
     st.error("I couldn't read those coordinates. Try something like 269.45 and 4.69.")
     st.stop()
@@ -288,14 +292,15 @@ pmra, pmdec, epoch = float(st.session_state.pmra), float(st.session_state.pmdec)
 has_pm = bool(pmra or pmdec)
 target = sx.Target(ra, dec, pmra, pmdec, epoch)
 _c2000 = sx.propagate(coord, pmra, pmdec, epoch, 2000.0) if epoch != 2000.0 else coord
-_name = lookup_name(float(_c2000.ra.deg), float(_c2000.dec.deg))
-if _name:
-    st.caption(f"📍 Known object here: **{_name}** (from SIMBAD)")
+try:
+    _name = lookup_name(float(_c2000.ra.deg), float(_c2000.dec.deg))
+except Exception as exc:
+    st.warning(f"SIMBAD lookup failed ({type(exc).__name__}: {str(exc)[:200]}). The SPHEREx view is unaffected.")
 else:
-    st.caption("📍 No catalogued object found at this position (it may be very faint, or the position is slightly off).")
-st.query_params.update(ra=st.session_state.ra, dec=st.session_state.dec, fov=str(fov),
-                       pmra=str(pmra), pmdec=str(pmdec), epoch=str(epoch))
-
+    if _name:
+        st.caption(f"📍 Known object here: **{_name}** (from SIMBAD)")
+    else:
+        st.caption("📍 No catalogued object found at this position (it may be very faint, or the position is slightly off).")
 # ---------------------------------------------------------------- which images exist
 try:
     with st.spinner("Asking the SPHEREx archive which images cover this spot (first time only)…"):
@@ -390,7 +395,7 @@ image_container = viewer_slot.container()
 m1, m2 = image_container.columns([3, 2])
 mode = m1.radio("View", ["▶ Animate", "⇄ Earliest vs latest"], horizontal=True, label_visibility="collapsed")
 zoom = m2.slider("Zoom", 1.0, 4.0, 1.0, 0.5, help="Zoom in on the target.")
-speed = image_container.slider("Speed", 1, 10, 3) if mode.startswith("▶") else None
+speed = image_container.slider("Speed", 1, 10, 3) if mode.startswith("▶") and len(frames) > 1 else None
 
 vy0, vy1, vx0, vx1 = view_box(crop, p_first, zoom)
 cube8 = to_uint8(np.stack([f.image[cy0:cy1, cx0:cx1] for f in frames]), upper, invert)
@@ -401,15 +406,18 @@ ring = "#22d3ee" if cmap != "Grayscale" else ("#f59e0b" if not invert else "#036
 
 if mode.startswith("▶"):
     fig = px.imshow(view, animation_frame=0, origin="lower", binary_string=True)
-    sl = fig.layout.sliders[0]
-    for step, f in zip(sl.steps, frames):
-        step.label = f.date
-    sl.currentvalue = dict(prefix="Date: ", font=dict(size=14))
-    sl.pad = dict(t=10)
-    if fig.layout.updatemenus:
-        btn = fig.layout.updatemenus[0].buttons[0].args[1]
-        btn["frame"]["duration"] = int(1000 / speed)
-        btn["transition"] = dict(duration=0)
+    if fig.layout.sliders:
+        sl = fig.layout.sliders[0]
+        for step, f in zip(sl.steps, frames):
+            step.label = f.date
+        sl.currentvalue = dict(prefix="Date: ", font=dict(size=14))
+        sl.pad = dict(t=10)
+        if fig.layout.updatemenus:
+            btn = fig.layout.updatemenus[0].buttons[0].args[1]
+            btn["frame"]["duration"] = int(1000 / speed)
+            btn["transition"] = dict(duration=0)
+    elif len(frames) == 1:
+        image_container.caption("Only one image is available for this target, so it is shown as a still frame.")
     marks = [(p_first, "solid")] + ([(p_last, "dot")] if has_pm else [])
 else:
     pick_l = image_container.radio(
@@ -661,4 +669,8 @@ with tab_guide:
         "- IRSA SPHEREx data products: "
         "https://caltech-ipac.github.io/spherex-archive-documentation/spherex-data-products\n"
         "- IRSA SPHEREx tutorial: https://caltech-ipac.github.io/irsa-tutorials/spherex-intro\n"
+        "- SIMBAD Astronomical Database (CDS), for object-name and nearby-object lookups: "
+        "https://simbad.cds.unistra.fr/simbad/\n"
+        "- SIMBAD reference: Wenger et al. (2000), A&AS, 143, 9: "
+        "https://doi.org/10.1051/aas:2000332\n"
         "- Bock et al., *The SPHEREx Satellite Mission*: https://arxiv.org/abs/2511.02985")
