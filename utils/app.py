@@ -210,17 +210,9 @@ def use_image_candidate(ra, dec):
                             epoch=sx.T_REF, tip="")
 
 
-if "ra" not in st.session_state:
+if "target_state_initialized" not in st.session_state:
     st.session_state.update(ra="", dec="", fov=12.0, pmra=0.0, pmdec=0.0, epoch=2000.0, tip="")
-    qp = st.query_params
-    if "ra" in qp:
-        try:
-            st.session_state.update(
-                ra=qp["ra"], dec=qp.get("dec", "0"), fov=min(max(float(qp.get("fov", 12)), 1.0), 30.0),
-                pmra=float(qp.get("pmra", 0)), pmdec=float(qp.get("pmdec", 0)),
-                epoch=float(qp.get("epoch", 2000)), tip="")
-        except ValueError:
-            pass
+    st.session_state.target_state_initialized = True
 
 # ---------------------------------------------------------------- header
 st.markdown(
@@ -303,9 +295,6 @@ else:
         st.caption(f"📍 Known object here: **{_name}** (from SIMBAD)")
     else:
         st.caption("📍 No catalogued object found at this position (it may be very faint, or the position is slightly off).")
-st.query_params.update(ra=st.session_state.ra, dec=st.session_state.dec, fov=str(fov),
-                       pmra=str(pmra), pmdec=str(pmdec), epoch=str(epoch))
-
 # ---------------------------------------------------------------- which images exist
 try:
     with st.spinner("Asking the SPHEREx archive which images cover this spot (first time only)…"):
