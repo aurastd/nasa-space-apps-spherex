@@ -5,6 +5,11 @@ Pick a target, press play, and spot what moves.
 
 > Built for the NASA Space Apps Challenge.
 
+## Challenge submission snapshot
+
+The version submitted on Nov 15, 2026 is preserved at [commit `8e3e2e0`](https://github.com/diane-benekeng/nasa-space-apps-spherex/tree/8e3e2e0).
+Later updates focus on reliability, usability, and source attribution; they add no new datasets or major project capabilities.
+
 ## What it does
 
 SPHEREx maps the whole sky in 102 infrared spectral channels. Its nominal 25-month mission plans four
@@ -28,7 +33,7 @@ independent all-sky surveys. Evarínya turns those raw exposures into something 
 - *Image candidates*: find bright nearby peaks in the selected SPHEREx images and inspect their coordinates.
   These are possible sources, not confirmed objects.
 - *Help*: a plain-language guide to the images, colors, motion markers, and data processing.
-- *Shareable views*: the page address encodes the target, so you can share a link to exactly what you see.
+- *Start with a target*: search by name, choose an example, or enter coordinates before loading the viewer.
 
 ## Example targets
 
